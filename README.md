@@ -23,6 +23,7 @@
 # Release Plan 
 * 2.1.0
     - configure `playlist_builder` for subreddit-specific choice between {`top`, `hot`, `new`}
+    - parameterize `Pure <genre>` playlist generation logic
 
 # Overview
 `DJ Tools` is a library for managing a Collection of audio files (not necessarily mp3 files, although that is preferred) and Rekordbox XML files.
