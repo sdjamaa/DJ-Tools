@@ -192,8 +192,6 @@ def fix_files(bad_files, _local_files, not_test, usb_path, verbosity):
     Returns:
         list: _local_files after swapping bad files for their corrections
     """
-    inverse_lookup = {os.path.basename(x): os.path.dirname(x)
-            for x in _local_files}
     logger.info(f'Renaming {len(bad_files)} "bad files"...')
     for bad, good in bad_files.items():
         _bad = os.path.join(usb_path, 'DJ Music', bad).replace(os.sep, '/')
@@ -202,8 +200,6 @@ def fix_files(bad_files, _local_files, not_test, usb_path, verbosity):
             logger.info(f"\t{_bad} -> {_good}")
         if not_test:
             os.rename(_bad, _good)
-        good = os.path.join(inverse_lookup[bad], good).replace(os.sep, '/')
-        bad = os.path.join(inverse_lookup[bad], bad).replace(os.sep, '/')
         _index = _local_files.index(bad)
         _local_files[_index] = good
 
@@ -388,9 +384,7 @@ def move_local_files(found_tracks, not_matched, users, playlist_genres,
             test_moved.append(msg)
 
         # reformat paths for S3 file relocations
-        _dir, _name = os.path.split(name)
-        _name = bad_files_inverse_lookup.get(_name, _name)
-        name = os.path.join(_dir, _name).replace(os.sep, '/')
+        name = bad_files_inverse_lookup.get(name, name)
         src_path = os.path.join(s3_prefix, name).replace(os.sep, '/')
         base_path = dest_path.split(os.path.join(usb_path,
                 'DJ Music', '').replace(os.sep, '/'))[-1]
@@ -434,9 +428,7 @@ def move_local_files(found_tracks, not_matched, users, playlist_genres,
         else:
             test_moved.append(msg)
 
-        _dir, _name = os.path.split(name)
-        _name = bad_files_inverse_lookup.get(_name, _name)
-        name = os.path.join(_dir, _name).replace(os.sep, '/')
+        name = bad_files_inverse_lookup.get(name, name)
         src_path = os.path.join(s3_prefix, name).replace(os.sep, '/')
         dest_path = os.path.join(s3_prefix, base_path).replace(os.sep, '/')
         s3_moves.append((src_path, dest_path))
