@@ -322,14 +322,14 @@ def match_local_files(_local_files, _tracks, fuzz_ratio, verbosity, ignore,
     logger.info(f'Fuzzy matched {len(found_tracks) - directly_found} files')
     logger.info(f"Unable to find {len(not_matched)} tracks (plus the " \
                 f"{len(ignore)} in data['ignore'])")
-    
+
     return found_tracks, not_matched
 
 
 def move_local_files(found_tracks, not_matched, users, playlist_genres,
                      usb_path, not_test, not_matched_lookup, move_s3,
                      verbosity, ignore, bad_files_inverse_lookup, xml_path,
-                     user_names):
+                     _user_names):
     """Moves files to their new location...
         (1) direct matches and fuzzy match results are moved locally
         (2) not matched local files are moved based on their previous directory
@@ -451,7 +451,6 @@ def move_local_files(found_tracks, not_matched, users, playlist_genres,
         elif verbosity > 0:
             logger.info(f'\t{_cmd}')
         xml_lookup[src.split(s3_prefix)[-1]] = dst.split(s3_prefix)[-1]
-    json.dump(xml_lookup, open('xml_lookup.json', 'w'))
 
     # rewrite XML_PATH so tracks point to their new locations
     if xml_path:
@@ -462,7 +461,7 @@ def move_local_files(found_tracks, not_matched, users, playlist_genres,
             if not track.get('Location'):
                 continue
             loc = unquote(track['Location']).split(loc_prefix)[-1]
-            if any((loc.startswith(name) for name in user_names)):
+            if any((loc.startswith(name) for name in _user_names)):
                 continue
             track['Location'] = quote(os.path.join(loc_prefix,
                     xml_lookup[loc]).replace(os.sep, '/'))
