@@ -327,9 +327,9 @@ def match_local_files(_local_files, _tracks, fuzz_ratio, verbosity, ignore,
 
 
 def move_local_files(found_tracks, not_matched, users, playlist_genres,
-                     usb_path, not_test, not_matched_lookup, move_s3,
+                     usb_path, not_test, not_matched_lookup, move_remote_files,
                      verbosity, ignore, bad_files_inverse_lookup, xml_path,
-                     _user_names):
+                     _user_names, write_xml):
     """Moves files to their new location...
         (1) direct matches and fuzzy match results are moved locally
         (2) not matched local files are moved based on their previous directory
@@ -343,7 +343,7 @@ def move_local_files(found_tracks, not_matched, users, playlist_genres,
         usb_path (str): full path to root of USB drive with "DJ Music"
         not_test (bool): flag to trigger moving local files
         not_matched_lookup (dict): maps local directories to genre folder
-        move_s3 (bool): flag to trigger moving s3 files
+        move_remote_files (bool): flag to trigger moving s3 files
         verbosity (int): verbosity level
         ignore (list): true non-matches with fuzz ratio above "fuzz_ratio"
         bad_files_inverse_lookup (dict): reverse lookup of corrected
@@ -446,15 +446,16 @@ def move_local_files(found_tracks, not_matched, users, playlist_genres,
     xml_lookup = {}
     for src, dst in s3_moves:
         _cmd = cmd.format(src, dst)
-        if not_test and move_s3:
+        if not_test and move_remote_files:
             os.system(_cmd)
         elif verbosity > 0:
             logger.info(f'\t{_cmd}')
         xml_lookup[src.split(s3_prefix)[-1]] = dst.split(s3_prefix)[-1]
 
     # rewrite XML_PATH so tracks point to their new locations
-    if xml_path:
-        soup = BeautifulSoup(open(xml_path, encoding='utf-8').read(), 'xml')
+    if write_xml:
+        with open(xml_path, encoding='utf-8') as _file:
+            soup = BeautifulSoup(_file.read(), 'xml')
         loc_prefix = os.path.join('file://localhost', usb_path.strip('/'),
                                   'DJ Music', '').replace(os.sep, '/')
         for track in soup.find_all('TRACK'):
@@ -519,8 +520,6 @@ if __name__ == '__main__':
                  '\t"ignore"')
     parser.add_argument('--not_test', action='store_true',
             help="actual execute local file moves")
-    parser.add_argument('--move_s3', action='store_true',
-            help="actual execute remove file moves")
     parser.add_argument('--config_path', help='path to config.json')
     parser.add_argument('--fuzz_ratio', default=80, type=float,
             help='fuzz ratio')
@@ -530,6 +529,8 @@ if __name__ == '__main__':
     parser.add_argument('--cache_fuzz_results', action='store_true',
             help="cache fuzz matches that are supposedly correct...used to " \
                  "clean up output as fuzz ratio is progressively lowered")
+    parser.add_argument('--write_xml', action='store_true',
+            help="rewrite XML_PATH to fix locations of tracks")
     parser.add_argument('--verbosity', '-v', action='count', default=0,
             help='logging verbosity')
     args = parser.parse_args()
@@ -550,8 +551,7 @@ if __name__ == '__main__':
 
     # temporary buffer to hold local file results for special consideration
     # while fuzzy searching
-    _matches = {
-    }
+    _matches = {}
 
     # standard djtools 'config.json' file (for USB_PATH, AWS_PROFILE, etc.)
     with open(args.config_path, encoding='utf-8') as _file:
@@ -617,6 +617,6 @@ if __name__ == '__main__':
     move_local_files(_found_tracks, _not_matched, data['users'],
                      data['playlist_genres'], config['USB_PATH'],
                      args.not_test, data['not_matched_genre_lookup'],
-                     args.move_s3, args.verbosity, data['ignore'],
+                     args.move_remote_files, args.verbosity, data['ignore'],
                      data['bad_files_inverse_lookup'],
-                     config['XML_PATH'], user_names)
+                     config['XML_PATH'], user_names, args.write_xml)
