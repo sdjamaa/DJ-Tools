@@ -500,15 +500,15 @@ def make_dirs(dest):
 if __name__ == '__main__':
     parser = ArgumentParser()
     parser.add_argument('--structure_data', required=True,
-            help='JSON with keys:\n' \
-                 '\t"spotify_playlists": map playlist_name -> playlist_id\n' \
-                 '\t"playlist_genres": map playlist name -> genre folder\n' \
-                 '\t"users": map Spotify username -> beatcloud username\n' \
-                 '\t"not_matched_genre_lookup": map remainder track ' \
-                            'folders -> new folders\n' \
-                 '\t"bad_files": map badly named files -> corrections\n' \
-                 '\t"ignore": list of files that incorrectly match Spotify ' \
-                            'tracks above the final fuzz_ratio')
+            help='''JSON with keys:' \
+                "spotify_playlists": map playlist_name -> playlist_id
+                "playlist_genres": map playlist name -> genre folder
+                "users": map Spotify username -> beatcloud username
+                "not_matched_genre_lookup": map remainder track folders -> new
+                                            folders
+                "bad_files": map badly named files -> corrections
+                "ignore": list of files that incorrectly match Spotify tracks
+                          above the final fuzz_ratio''')
     parser.add_argument('--config_path', help='path to config.json')
     parser.add_argument('--fuzz_ratio', default=80, type=float,
             help='minimum fuzz ratio to match Spotify track to local file')
