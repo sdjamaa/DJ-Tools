@@ -179,13 +179,14 @@ def exists_process(path, _file):
     return _file if os.path.exists(_path) else None
 
 
-def fix_files(bad_files, _local_files, not_test, usb_path, verbosity):
-    """[summary]
+def fix_files(bad_files, _local_files, move_local_files, usb_path, verbosity):
+    """Renames local files to fix typos and improve fuzz match results so all
+    correct matches happen above the final fuzz_ratio.
 
     Args:
         bad_files (dict): map bad file names to their corrections
         _local_files (list): list of local file paths
-        not_test (bool): flag to trigger moving local files
+        move_local_files (bool): flag to trigger moving local files
         usb_path (str): path to root of USB containing "DJ Music"
         verbosity (int): verbosity level
 
@@ -198,7 +199,7 @@ def fix_files(bad_files, _local_files, not_test, usb_path, verbosity):
         _good = os.path.join(usb_path, 'DJ Music', good).replace(os.sep, '/')
         if verbosity > 0:
             logger.info(f"\t{_bad} -> {_good}")
-        if not_test:
+        if move_local_files:
             os.rename(_bad, _good)
         _index = _local_files.index(bad)
         _local_files[_index] = good
@@ -208,7 +209,16 @@ def fix_files(bad_files, _local_files, not_test, usb_path, verbosity):
 
 def match_local_files(_local_files, _tracks, fuzz_ratio, verbosity, ignore,
                       _matches, cache_fuzz_results):
-    """[summary]
+    """Matches local files to Spotify tracks:
+        (1) first pass does direct string equality checks between file names
+            and `title - artist` strings of Spotify tracks
+        (2) second pass fuzzy matches files against Spotify tracks...
+    
+    If run with `--cache_fuzz_results`, previously confirmed matches are
+    eliminated from consideration during fuzzy matching; this is so it can be
+    easier to dial in the proper `fuzz_ratio` while ensuring every matched
+    track is correct (and also identify what `bad_files` can be corrected to
+    improve matching). The final run should NOT use cached fuzz results.
 
     Args:
         _local_files (list): list of local file paths
@@ -326,10 +336,10 @@ def match_local_files(_local_files, _tracks, fuzz_ratio, verbosity, ignore,
     return found_tracks, not_matched
 
 
-def move_local_files(found_tracks, not_matched, users, playlist_genres,
-                     usb_path, not_test, not_matched_lookup, move_remote_files,
-                     verbosity, ignore, bad_files_inverse_lookup, xml_path,
-                     _user_names, write_xml):
+def move_files(found_tracks, not_matched, users, playlist_genres, usb_path,
+               move_local_files, not_matched_lookup, move_remote_files,
+               verbosity, ignore, bad_files_inverse_lookup, xml_path,
+               _user_names, write_xml):
     """Moves files to their new location...
         (1) direct matches and fuzzy match results are moved locally
         (2) not matched local files are moved based on their previous directory
@@ -341,7 +351,7 @@ def move_local_files(found_tracks, not_matched, users, playlist_genres,
         users (dict): map Spotify username -> beatcloud username
         playlist_genres (dict): map playlist name to genre folder
         usb_path (str): full path to root of USB drive with "DJ Music"
-        not_test (bool): flag to trigger moving local files
+        move_local_files (bool): flag to trigger moving local files
         not_matched_lookup (dict): maps local directories to genre folder
         move_remote_files (bool): flag to trigger moving s3 files
         verbosity (int): verbosity level
@@ -357,50 +367,38 @@ def move_local_files(found_tracks, not_matched, users, playlist_genres,
     # corresponding data['playlist_genres'] folder
     s3_prefix = 's3://dj.beatcloud.com/dj/music/'
     test_seen = set()
-    test_moved = []
     s3_moves = []
     logger.info('Moving matched local files to their new locations...')
     for name, track in found_tracks.items():
         user = users[track['added_by']]
         genre = playlist_genres[track['playlist']]
-        dest = os.path.join(usb_path, 'DJ Music', user, genre, 'old')
-        if not os.path.exists(dest):
-            if not_test:
-                make_dirs(dest)
+        base_path = os.path.join(user, genre, 'old', os.path.basename(name))
+        dest_path = os.path.join(usb_path, 'DJ Music',
+                                 base_path).replace(os.sep, '/')
+        dest_dir = os.path.dirname(dest_path)
+        if not os.path.exists(dest_dir):
+            if move_local_files:
+                make_dirs(dest_dir)
             else:
-                if dest not in test_seen:
-                    logger.info(f'Making directory: {dest}')
-                    test_seen.add(dest)
+                if dest_dir not in test_seen:
+                    logger.info(f'Making directory: {dest_dir}')
+                    test_seen.add(dest_dir)
         src_path = os.path.join(usb_path, 'DJ Music',
                                 name).replace(os.sep, '/')
-        dest_path = os.path.join(dest,
-                                 os.path.basename(name)).replace(os.sep, '/')
         msg = f"\t{src_path} -> {dest_path}"
-        if not_test:
-            if verbosity > 0:
-                logger.info(msg)
+        if verbosity > 0:
+            logger.info(msg)
+        if move_local_files:
             os.rename(src_path, dest_path)
-        else:
-            test_moved.append(msg)
 
         # reformat paths for S3 file relocations
         name = bad_files_inverse_lookup.get(name, name)
         src_path = os.path.join(s3_prefix, name).replace(os.sep, '/')
-        base_path = dest_path.split(os.path.join(usb_path,
-                'DJ Music', '').replace(os.sep, '/'))[-1]
         dest_path = os.path.join(s3_prefix, base_path).replace(os.sep, '/')
         s3_moves.append((src_path, dest_path))
 
-    if not not_test:
-        logger.info(f'Moved {len(test_moved)} matched local files to a new ' \
-                    'location')
-        if verbosity > 0:
-            for relocation in test_moved:
-                logger.info(relocation)
-
     # move remaining tracks using the original file location's parent directory
     # to determine the proper new location
-    test_moved = []
     logger.info('Moving unmatched local files to the proper location based ' \
                 'on the directory of their previous location...')
     for name in not_matched + ignore:
@@ -411,7 +409,7 @@ def move_local_files(found_tracks, not_matched, users, playlist_genres,
                                  base_path).replace(os.sep, '/')
         dest_dir = os.path.dirname(dest_path)
         if not os.path.exists(dest_dir):
-            if not_test:
+            if move_local_files:
                 make_dirs(dest_dir)
             else:
                 if dest_dir not in test_seen:
@@ -421,24 +419,15 @@ def move_local_files(found_tracks, not_matched, users, playlist_genres,
         src_path = os.path.join(usb_path, 'DJ Music',
                                 name).replace(os.sep, '/')
         msg = f'\t{src_path} -> {dest_path}'
-        if not_test:
-            if verbosity > 0:
-                logger.info(msg)
+        if verbosity > 0:
+            logger.info(msg)
+        if move_local_files:
             os.rename(src_path, dest_path)
-        else:
-            test_moved.append(msg)
 
         name = bad_files_inverse_lookup.get(name, name)
         src_path = os.path.join(s3_prefix, name).replace(os.sep, '/')
         dest_path = os.path.join(s3_prefix, base_path).replace(os.sep, '/')
         s3_moves.append((src_path, dest_path))
-
-    if not not_test:
-        logger.info(f"Moved {len(test_moved)} not matched local files to a " \
-                    "new location...this includes files in data['ignore']")
-        if verbosity > 0:
-            for relocation in test_moved:
-                logger.info(relocation)
 
     # Move S3 files to their new locations
     logger.info(f'Moving {len(s3_moves)} S3 files to new locations...')
@@ -446,7 +435,7 @@ def move_local_files(found_tracks, not_matched, users, playlist_genres,
     xml_lookup = {}
     for src, dst in s3_moves:
         _cmd = cmd.format(src, dst)
-        if not_test and move_remote_files:
+        if move_remote_files:
             os.system(_cmd)
         elif verbosity > 0:
             logger.info(f'\t{_cmd}')
@@ -467,7 +456,6 @@ def move_local_files(found_tracks, not_matched, users, playlist_genres,
             track['Location'] = quote(os.path.join(loc_prefix,
                     xml_lookup[loc]).replace(os.sep, '/'))
 
-        # if not_test:
         with open(xml_path, mode='wb', encoding=soup.orignal_encoding) \
                 as _file:
             _file.write(soup.prettify('utf-8'))
@@ -513,22 +501,25 @@ if __name__ == '__main__':
     parser = ArgumentParser()
     parser.add_argument('--structure_data', required=True,
             help='JSON with keys:\n' \
-                 '\t"spotify_playlists: map playlist_name -> playlist_id"\n' \
-                 '\t"playlist_genres: "\n' \
-                 '\t"users"\n' \
-                 '\t"bad_files"\n' \
-                 '\t"ignore"')
-    parser.add_argument('--not_test', action='store_true',
-            help="actual execute local file moves")
+                 '\t"spotify_playlists": map playlist_name -> playlist_id\n' \
+                 '\t"playlist_genres": map playlist name -> genre folder\n' \
+                 '\t"users": map Spotify username -> beatcloud username\n' \
+                 '\t"not_matched_genre_lookup": map remainder track ' \
+                            'folders -> new folders\n' \
+                 '\t"bad_files": map badly named files -> corrections\n' \
+                 '\t"ignore": list of files that incorrectly match Spotify ' \
+                            'tracks above the final fuzz_ratio')
     parser.add_argument('--config_path', help='path to config.json')
     parser.add_argument('--fuzz_ratio', default=80, type=float,
-            help='fuzz ratio')
-    parser.add_argument('--move_remote_files', action='store_true',
-            help="rename files in S3 so they're under the proper user and " \
-                 "genre folders")
+            help='minimum fuzz ratio to match Spotify track to local file')
     parser.add_argument('--cache_fuzz_results', action='store_true',
             help="cache fuzz matches that are supposedly correct...used to " \
                  "clean up output as fuzz ratio is progressively lowered")
+    parser.add_argument('--move_local_files', action='store_true',
+            help="actual execute local file moves")
+    parser.add_argument('--move_remote_files', action='store_true',
+            help="rename files in S3 so they're under the proper user and " \
+                 "genre folders")
     parser.add_argument('--write_xml', action='store_true',
             help="rewrite XML_PATH to fix locations of tracks")
     parser.add_argument('--verbosity', '-v', action='count', default=0,
@@ -596,10 +587,11 @@ if __name__ == '__main__':
     logger.info(f'Ignoring {_ - len(local_files)} files that are already ' \
                 'in the right place')
 
-    # rename files (only if `--not_test`), otherwise swaps 'bad' local files in
-    # index for the 'good' ones mapped in data['bad_files']
-    local_files = fix_files(data['bad_files'], local_files, args.not_test,
-                            config['USB_PATH'], args.verbosity)
+    # rename files (only if `--move_local_files`), otherwise swaps 'bad' local
+    # files in index for the 'good' ones mapped in data['bad_files']
+    local_files = fix_files(data['bad_files'], local_files,
+                            args.move_local_files, config['USB_PATH'],
+                            args.verbosity)
 
     # This operation is meant to be run multiple times with progressively lower
     # 'fuzz_ratio'...each time:
@@ -614,9 +606,9 @@ if __name__ == '__main__':
             data['ignore'], _matches, args.cache_fuzz_results)
 
     # moves local files, remote files, and rewrites XML
-    move_local_files(_found_tracks, _not_matched, data['users'],
-                     data['playlist_genres'], config['USB_PATH'],
-                     args.not_test, data['not_matched_genre_lookup'],
-                     args.move_remote_files, args.verbosity, data['ignore'],
-                     data['bad_files_inverse_lookup'],
-                     config['XML_PATH'], user_names, args.write_xml)
+    move_files(_found_tracks, _not_matched, data['users'],
+               data['playlist_genres'], config['USB_PATH'],
+               args.move_local_files, data['not_matched_genre_lookup'],
+               args.move_remote_files, args.verbosity, data['ignore'],
+               data['bad_files_inverse_lookup'], config['XML_PATH'],
+               user_names, args.write_xml)
